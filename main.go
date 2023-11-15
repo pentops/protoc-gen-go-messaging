@@ -157,17 +157,17 @@ func genServiceExtension(g *protogen.GeneratedFile, service *protogen.Service) e
 			g.P("func (msg *", method.Desc.Input().Name(), ") MessagingTopic() string {")
 			switch topicType := messagingAnnotation.Type.(type) {
 			case *messaging_pb.Config_Broadcast:
-				g.P("return \"topic/", topicType.Broadcast.Name, "\"")
+				g.P("return \"", topicType.Broadcast.Name, "\"")
 
 			case *messaging_pb.Config_Unicast:
-				g.P("return \"queue/", topicType.Unicast.Name, "\"")
+				g.P("return \"", topicType.Unicast.Name, "\"")
 
 			case *messaging_pb.Config_Reply:
 				sagaReplyField, err := getFieldForType(method.Input, "messaging.v1.SagaReply")
 				if err != nil {
 					return err
 				}
-				g.P("return \"queue/", topicType.Reply.Name, "_\" + msg.", sagaReplyField.GoName, ".ReplyQueue")
+				g.P("return \"", topicType.Reply.Name, "_\" + msg.", sagaReplyField.GoName, ".ReplyQueue")
 
 			default:
 				return fmt.Errorf("unknown / unsupported topic type %v", topicType)
