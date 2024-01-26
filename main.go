@@ -39,6 +39,7 @@ func main() {
 		if extraHeadersString == nil || *extraHeadersString == "" {
 			// This breaks the 'pure function' ideal, but there doesn't appear to be any way to dynamically inject using buf
 			str := os.Getenv("PROTOC_GEN_GO_MESSAGING_EXTRA_HEADERS")
+			fmt.Printf("First saw PROTOC_GEN_GO_MESSAGING_EXTRA_HEADERS as '%v'\n", str)
 			extraHeadersString = &str
 		}
 
@@ -47,12 +48,16 @@ func main() {
 			if len(parts)%2 != 0 {
 				return fmt.Errorf("uneven number of extra_headers")
 			}
+			fmt.Printf("parts is '%+v'\n", parts)
+			// extraHeadersString should be `api-version:abcdef`
+			// parts is parts[0]api-version parts[1]abcdef
 			for x := 0; x < len(parts); x += 2 {
 				extraHeaders = append(extraHeaders, keyValue{
 					key: strings.TrimSpace(parts[x]),
 					val: strings.TrimSpace(parts[x+1]),
 				})
 			}
+			fmt.Printf("extra headers: '%+v'\n", extraHeaders)
 		}
 
 		for _, f := range gen.Files {
@@ -65,6 +70,8 @@ func main() {
 		}
 		return nil
 	})
+	// ensure we see output by exiting non-0
+	os.Exit(-1)
 }
 
 // generateFile generates a _messaging.pb.go file containing various mappings Messaging Over gRPC extensions
