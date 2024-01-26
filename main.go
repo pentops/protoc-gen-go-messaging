@@ -68,10 +68,9 @@ func main() {
 				return err
 			}
 		}
-		return nil
+		return fmt.Errorf("expected error")
+		// return nil
 	})
-	// ensure we see output by exiting non-0
-	os.Exit(-1)
 }
 
 // generateFile generates a _messaging.pb.go file containing various mappings Messaging Over gRPC extensions
