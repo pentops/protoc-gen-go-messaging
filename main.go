@@ -162,12 +162,20 @@ func genServiceExtension(g *protogen.GeneratedFile, service *protogen.Service) e
 			case *messaging_pb.Config_Unicast:
 				g.P("return \"", topicType.Unicast.Name, "\"")
 
-			case *messaging_pb.Config_Reply:
-				sagaReplyField, err := getFieldForType(method.Input, "messaging.v1.SagaReply")
+			case *messaging_pb.Config_Request:
+				// ensure the message conforms
+				_, err := getFieldForType(method.Input, "o5.messaging.v1.RequestMetadata")
 				if err != nil {
 					return err
 				}
-				g.P("return \"", topicType.Reply.Name, "_\" + msg.", sagaReplyField.GoName, ".ReplyQueue")
+				g.P("return \"", topicType.Request.Name, "_request\"")
+
+			case *messaging_pb.Config_Reply:
+				sagaReplyField, err := getFieldForType(method.Input, "o5.messaging.v1.RequestMetadata")
+				if err != nil {
+					return err
+				}
+				g.P("return \"", topicType.Reply.Name, "_reply_\" + msg.", sagaReplyField.GoName, ".ReplyTo")
 
 			default:
 				return fmt.Errorf("unknown / unsupported topic type %v", topicType)
@@ -191,16 +199,6 @@ func genServiceExtension(g *protogen.GeneratedFile, service *protogen.Service) e
 			g.P(`headers["grpc-upsert-entity-id"] = msg.`, upsertField.GoName, `.EntityId`)
 			// cheating with RFC3339 string so we don't have to import time package in the generated code.
 			g.P(`headers["grpc-upsert-entity-timestamp"] = msg.`, upsertField.GoName, `.Timestamp.AsTime().Format("`, time.RFC3339, `")`)
-			g.P(`}`)
-		}
-
-		eventField, err := getOptionalFieldForType(method.Input, "messaging.v1.EventMetadata")
-		if err != nil {
-			return err
-		}
-		if eventField != nil {
-			g.P(`if msg.`, upsertField.GoName, ` != nil {`)
-			g.P(`headers["grpc-event-message-id"] = msg.`, upsertField.GoName, `.MessageId`)
 			g.P(`}`)
 		}
 
