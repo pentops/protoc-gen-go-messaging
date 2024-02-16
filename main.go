@@ -49,8 +49,8 @@ func main() {
 			}
 			for x := 0; x < len(parts); x += 2 {
 				extraHeaders = append(extraHeaders, keyValue{
-					key: strings.TrimSpace(parts[x]),
-					val: strings.TrimSpace(parts[x+1]),
+					key:  strings.TrimSpace(parts[x]),
+					code: []interface{}{`"`, strings.TrimSpace(parts[x+1]), `"`},
 				})
 			}
 		}
@@ -130,81 +130,106 @@ func getOptionalFieldForType(message *protogen.Message, typeName string) (*proto
 }
 
 type keyValue struct {
-	key string
-	val string
+	key  string
+	code []interface{}
 }
 
 func genServiceExtension(g *protogen.GeneratedFile, service *protogen.Service) error {
 	g.P("// Service: " + service.GoName)
 
 	for _, method := range service.Methods {
-		g.P("// Method: " + method.GoName)
-		g.P("")
-
-		headers := append([]keyValue{
-			{key: "grpc-service", val: fmt.Sprintf("/%s/%s", service.Desc.FullName(), method.Desc.FullName().Name())},
-			{key: "grpc-message", val: string(method.Input.Desc.FullName())},
-		}, extraHeaders...)
-
-		messagingAnnotation, ok := proto.GetExtension(service.Desc.Options(), messaging_pb.E_Config).(*messaging_pb.Config)
-		if ok && messagingAnnotation != nil {
-
-			// OUTPUT:
-			// func (msg *AddEntryMessage) MessagingTopic() string {
-			//   return "... as defined"
-			// }
-
-			g.P("func (msg *", method.Desc.Input().Name(), ") MessagingTopic() string {")
-			switch topicType := messagingAnnotation.Type.(type) {
-			case *messaging_pb.Config_Broadcast:
-				g.P("return \"", topicType.Broadcast.Name, "\"")
-
-			case *messaging_pb.Config_Unicast:
-				g.P("return \"", topicType.Unicast.Name, "\"")
-
-			case *messaging_pb.Config_Request:
-				// ensure the message conforms
-				_, err := getFieldForType(method.Input, "o5.messaging.v1.RequestMetadata")
-				if err != nil {
-					return err
-				}
-				g.P("return \"", topicType.Request.Name, "_request\"")
-
-			case *messaging_pb.Config_Reply:
-				sagaReplyField, err := getFieldForType(method.Input, "o5.messaging.v1.RequestMetadata")
-				if err != nil {
-					return err
-				}
-				g.P("return \"", topicType.Reply.Name, "_reply_\" + msg.", sagaReplyField.GoName, ".ReplyTo")
-
-			default:
-				return fmt.Errorf("unknown / unsupported topic type %v", topicType)
-			}
-			g.P("}")
+		if err := genMethodExtension(g, service, method); err != nil {
+			return err
 		}
+	}
+	return nil
+}
 
-		g.P("func (msg *", method.Desc.Input().Name(), ") MessagingHeaders() map[string]string {")
-		g.P("headers := map[string]string{")
-		for _, header := range headers {
-			g.P(`"`, header.key, `": "`, header.val, `",`)
-		}
-		g.P("}")
+func genMethodExtension(g *protogen.GeneratedFile, service *protogen.Service, method *protogen.Method) error {
+	g.P("// Method: " + method.GoName)
+	g.P("")
 
-		upsertField, err := getOptionalFieldForType(method.Input, "messaging.v1.UpsertMetadata")
+	headers := append([]keyValue{
+		{key: "grpc-service", code: []interface{}{`"/`, service.Desc.FullName(), `/`, method.Desc.Name(), `"`}},
+		{key: "grpc-message", code: []interface{}{`"`, method.Input.Desc.FullName(), `"`}},
+	}, extraHeaders...)
+
+	messagingAnnotation, _ := proto.GetExtension(service.Desc.Options(), messaging_pb.E_Config).(*messaging_pb.Config)
+	if messagingAnnotation == nil {
+		return nil
+	}
+
+	// OUTPUT:
+	// func (msg *AddEntryMessage) MessagingTopic() string {
+	//   return "... as defined"
+	// }
+
+	var messagingTopic string
+	switch topicType := messagingAnnotation.Type.(type) {
+	case *messaging_pb.Config_Broadcast:
+		messagingTopic = topicType.Broadcast.Name
+
+	case *messaging_pb.Config_Unicast:
+		messagingTopic = topicType.Unicast.Name
+
+	case *messaging_pb.Config_Request:
+		messagingTopic = topicType.Request.Name + "_request"
+		sagaReplyField, err := getFieldForType(method.Input, "o5.messaging.v1.RequestMetadata")
 		if err != nil {
 			return err
 		}
-		if upsertField != nil {
-			g.P(`if msg.`, upsertField.GoName, ` != nil {`)
-			g.P(`headers["grpc-upsert-entity-id"] = msg.`, upsertField.GoName, `.EntityId`)
-			// cheating with RFC3339 string so we don't have to import time package in the generated code.
-			g.P(`headers["grpc-upsert-entity-timestamp"] = msg.`, upsertField.GoName, `.Timestamp.AsTime().Format("`, time.RFC3339, `")`)
-			g.P(`}`)
-		}
+		headers = append(headers, keyValue{
+			key: "o5-request-reply-to",
+			code: []interface{}{
+				`msg.`, sagaReplyField.GoName, `.ReplyTo`,
+			},
+		})
 
-		g.P("return headers")
-		g.P("}")
+	case *messaging_pb.Config_Reply:
+		messagingTopic = topicType.Reply.Name + "_reply"
+		sagaReplyField, err := getFieldForType(method.Input, "o5.messaging.v1.RequestMetadata")
+		if err != nil {
+			return err
+		}
+		headers = append(headers, keyValue{
+			key: "o5-reply-reply-to",
+			code: []interface{}{
+				`msg.`, sagaReplyField.GoName, `.ReplyTo`,
+			},
+		})
+
+	default:
+		return fmt.Errorf("unknown / unsupported topic type %v", topicType)
 	}
+
+	g.P("func (msg *", method.Desc.Input().Name(), ") MessagingTopic() string {")
+	g.P("return \"", messagingTopic, "\"")
+	g.P("}")
+
+	g.P("func (msg *", method.Desc.Input().Name(), ") MessagingHeaders() map[string]string {")
+	g.P("headers := map[string]string{")
+	for _, header := range headers {
+		codeLine := append([]interface{}{`"`, header.key, `": `}, header.code...)
+		codeLine = append(codeLine, ",")
+		g.P(codeLine...)
+	}
+	g.P("}")
+
+	upsertField, err := getOptionalFieldForType(method.Input, "messaging.v1.UpsertMetadata")
+	if err != nil {
+		return err
+	}
+	if upsertField != nil {
+		g.P(`if msg.`, upsertField.GoName, ` != nil {`)
+		g.P(`headers["o5-upsert-entity-id"] = msg.`, upsertField.GoName, `.EntityId`)
+		// cheating with RFC3339 string so we don't have to import time package in the generated code.
+		g.P(`headers["o5-upsert-entity-timestamp"] = msg.`, upsertField.GoName, `.Timestamp.AsTime().Format("`, time.RFC3339, `")`)
+		g.P(`}`)
+	}
+
+	g.P("return headers")
+	g.P("}")
+	g.P("")
 	return nil
 }
 
